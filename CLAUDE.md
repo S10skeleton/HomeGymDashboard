@@ -4,9 +4,9 @@
 Local-network home gym dashboard built with React + Vite frontend and an Express backend. Runs on a home server (Raspberry Pi or similar), accessed via touchscreen/TV in the gym. Single user, no auth.
 
 ## Tech Stack
-- **Frontend:** React 18, Vite, all styling via inline JS objects (no CSS files, no Tailwind, no component libraries)
+- **Frontend:** React 18, Vite, styling via inline JS objects + a small injected `<style>` block for layout classes and media queries
 - **Backend:** Express (ESM), Node.js
-- **Storage:** Flat JSON files in `data/` directory — one file per key, written atomically via `/api/storage/:key`
+- **Storage:** Flat JSON files in `data/` — one file per key, written atomically via `/api/storage/:key`
 - **AI:** Anthropic Claude API proxied through `/api/chat` — API key lives server-side only, never touches the frontend
 - **Music:** YouTube IFrame API loaded at runtime, no npm package
 
@@ -14,12 +14,13 @@ Local-network home gym dashboard built with React + Vite frontend and an Express
 ```
 HomeGymDashboard/
 ├── src/
-│   ├── ForgeGym.jsx      — entire frontend, single file
+│   ├── ForgeGym.jsx      — entire frontend, single file (~960 lines)
 │   └── main.jsx          — React entry point
 ├── server/
 │   └── index.js          — Express server (storage API + Anthropic proxy + static serving)
-├── data/                 — auto-created, gitignored, holds forge-history.json / forge-playlist.json
+├── data/                 — auto-created, gitignored — forge-history.json, forge-playlist.json
 ├── .env                  — ANTHROPIC_API_KEY=sk-... (already configured, do not touch)
+├── CLAUDE.md             — this file
 ├── index.html
 ├── package.json
 └── vite.config.js
@@ -32,11 +33,22 @@ npm run build      # builds frontend to dist/
 npm start          # production: serves built dist/ from Express on :3000
 ```
 
-Vite proxies `/api/*` to `http://localhost:3000` in dev mode — already configured in `vite.config.js`.
+Vite proxies `/api/*` to `http://localhost:3000` in dev — already configured in `vite.config.js`.
 
-## Design System
-All styles are inline JS objects. The design tokens live at the top of `ForgeGym.jsx`:
+## Styling Architecture
+Two layers — keep both in sync when making changes:
 
+**1. CSS class layer** — injected via `<style>{gCss}</style>` inside `ForgeGym()`. Handles layout, responsive breakpoints, and active-mode toggling. Key classes:
+```css
+.forge-root          /* grid wrapper: 1fr 320px */
+.forge-main          /* left content column: max-width 720px, centered */
+.music-panel         /* right sidebar, 320px */
+.forge-root.active-mode          /* collapses grid to 1fr during active workout */
+.forge-root.active-mode .music-panel  /* hides panel (display:none) — music keeps playing */
+@media (max-width:900px)         /* collapses to single column on small screens */
+```
+
+**2. Inline style layer** — all component-level styles. Design tokens:
 ```js
 const C = {
   bg: "#080808", surf: "#111111", surf2: "#181818",
@@ -46,60 +58,81 @@ const C = {
 };
 const s = {
   bigBtn: { ... },   // primary CTA button
-  adjBig: { ... },   // large +/- touch buttons
+  adjBig: { ... },   // large +/- touch buttons (52x52px)
   adjSm:  { ... },   // small adjustment buttons
   card:   { ... },   // surface card
   label:  { ... },   // Orbitron uppercase label
 };
 ```
 
-**Fonts:** Orbitron (headers, labels, numbers) + Rajdhani (body). Loaded via Google Fonts in the `MusicPanel` useEffect.
-**Aesthetic:** Dark cyberpunk. Crimson red accents. No gradients except on the START WORKOUT hero card. Keep it industrial.
+**Fonts:** Orbitron (headers, labels, numbers) + Rajdhani (body). Loaded via Google Fonts link tag injected in `MusicPanel`'s `useEffect` (runs once on mount).
 
-## Layout
-The root wrapper uses a CSS grid: `1fr 320px`. Left = main content, right = persistent `MusicPanel`. During active workout the grid collapses to `1fr` and the music panel is hidden (but stays mounted so playback continues). Under 900px wide, the panel is also hidden and the main content takes the full width.
+**Aesthetic:** Dark cyberpunk, crimson red accents. No purple gradients, no rounded-everything — keep it industrial and intentional.
 
-Bottom nav has 4 tabs: Home, Exercises, AI Forge, History.
-
-## Screen/State Flow
+## Layout Structure
 ```
-screen state: "home" | "library" | "ai" | "history" | "active" | "summary"
+┌─────────────────────────────────┬──────────────┐
+│  .forge-main (1fr, max 720px)   │ .music-panel │
+│                                 │    (320px)   │
+│  [header]                       │              │
+│  [screen content]               │  YouTube     │
+│  [bottom nav]                   │  player      │
+└─────────────────────────────────┴──────────────┘
 ```
-- `startWorkout(plan)` — sets `active` state and switches to "active"
-- `logSet()` — advances set/exercise index, triggers rest timer
-- `finishWorkout(w)` — saves session to history via `/api/storage/forge-history`, goes to "summary"
+During active workout: `.forge-root` gets class `active-mode` → grid becomes `1fr`, music panel gets `display:none` (but stays mounted so playback continues uninterrupted).
+
+## Screen / State Flow
+```
+screen: "home" | "library" | "ai" | "history" | "active" | "summary"
+```
+- `startWorkout(plan)` — initializes `active` state, navigates to `"active"`
+- `logSet()` — advances set/exercise index, starts rest timer
+- `finishWorkout(w)` — saves to `/api/storage/forge-history`, navigates to `"summary"`
+
+Navigation lives in bottom nav (4 tabs). Back button appears in header when not on home. Active workout and summary have no nav bar.
 
 ## Data Shapes
 ```js
-// Workout plan (passed to startWorkout)
+// Workout plan (input to startWorkout)
 { name: string, exercises: [{ exerciseId, name, sets, targetReps, restSecs }] }
 
 // Active workout state (extends plan)
 { ...plan, startTime, exIdx, setIdx, logged: [[{wt, reps}]], resting, restLeft, restTotal, wt, reps }
 
-// Saved session (stored in history)
+// Saved session (in history array)
 { id, date, name, duration, exercises: [{ name, sets: [{wt, reps}] }] }
 ```
 
 ## Exercise Database
-42 exercises at the top of `ForgeGym.jsx`. All mapped to a Mikolo Smith Machine / Power Cage with dual cable system and vertical leg press. Shape:
+42 exercises at the top of `ForgeGym.jsx`, all mapped to the Mikolo Smith Machine / Power Cage with dual cable system and vertical leg press. Shape:
 ```js
 { id, name, cat, equip, type: "compound"|"isolation", rest: seconds }
 ```
-Categories: Chest, Back, Legs, Shoulders, Arms, Core.
+Categories: `Chest | Back | Legs | Shoulders | Arms | Core`
 
 ## AI Coach
-Calls `/api/chat` which proxies to Anthropic. The system prompt instructs the model (claude-sonnet-4-5) to return workout plans as a ` ```workout ` JSON block. The frontend parses this and renders a "START THIS WORKOUT" button. Keep the system prompt as-is unless changing equipment context.
+Calls `/api/chat` which proxies to Anthropic (`claude-sonnet-4-5`). System prompt tells the model to return workout plans as a triple-backtick `workout` JSON block. Frontend regex-parses that block and renders a "START THIS WORKOUT" button. Do not change the model string or the `workout` block format without updating both the system prompt and the parse regex.
 
 ## YouTube Music Panel
-Uses `window.YT.Player` (YouTube IFrame API). The player mounts into a ref-held container div inside `MusicPanel` — YT replaces a throwaway child element with an iframe, so React never touches it. `MusicPanel` is always mounted (even during active workout — it's hidden via `display:none` so playback continues). Playlist URL is saved to `/api/storage/forge-playlist`. Accepts full YouTube/YouTube Music URLs or raw playlist IDs via `extractPlaylistId()`.
+`MusicPanel` is **always mounted** — it renders as the `.music-panel` aside and is only visually hidden via CSS during active workout. This keeps the YouTube iframe alive and music playing across screen changes.
 
-## What's Intentionally Simple
-- No TypeScript — plain JSX
-- No state management library — useState/useRef only
-- No CSS modules or Tailwind — inline styles throughout, use the `C` and `s` constants
-- No router — single component with a `screen` state string
-- No database — flat JSON files are fine for single-user local use
+Implementation details:
+- Uses `containerRef` — a `useRef` pointing to a div inside the panel. The YT API replaces a throwaway child element inside that div with an iframe (React never touches the iframe directly).
+- `cuePlaylist()` loads a playlist without autoplaying — user taps play manually.
+- Playlist URL is saved to `/api/storage/forge-playlist` and restored on mount.
+- `extractPlaylistId(url)` handles both `youtube.com/playlist?list=ID` and `music.youtube.com/playlist?list=ID` URL formats.
+- **Do not convert this to a conditional render** — the panel must stay mounted or playback dies on screen change.
 
-## Home Assistant Integration (Planned)
-Future feature: fire webhooks from the dashboard to HA on rest-end, workout-start, and workout-complete events. Will need a HA base URL + long-lived token stored in `.env`. Hook points are in `logSet()` (rest timer end) and `startWorkout()` / `finishWorkout()`.
+## What's Intentionally Simple — Don't Change These
+- No TypeScript — plain JSX only
+- No state management library — useState / useRef only
+- No CSS modules, no Tailwind — inline styles + the gCss block, use C and s constants
+- No router — screen state string drives all navigation
+- No database — flat JSON files are correct for single-user local use
+- Single ForgeGym.jsx file — do not split into multiple component files
+
+## Home Assistant Integration (Planned — Not Yet Built)
+Fire webhooks to HA on key workout events. Will need `HA_BASE_URL` and `HA_TOKEN` added to `.env` and a server-side proxy endpoint (same pattern as `/api/chat` — never expose the token to the frontend). Planned hook points:
+- `logSet()` when rest timer starts — trigger "rest" scene (color change or sound)
+- `startWorkout()` — "focus" scene (dim red)
+- `finishWorkout()` — "done" celebration scene
