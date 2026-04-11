@@ -128,6 +128,185 @@ function CircularTimer({ seconds, total, onSkip }) {
   );
 }
 
+// ── YOUTUBE IFRAME LOADER ──────────────────────────────────────────────────
+// Loads the YouTube IFrame API once per page load. Returns a promise that
+// resolves with `window.YT` so callers can `new YT.Player(...)`.
+let ytReadyPromise = null;
+function loadYT() {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  if (ytReadyPromise) return ytReadyPromise;
+  ytReadyPromise = new Promise((resolve) => {
+    if (window.YT && window.YT.Player) { resolve(window.YT); return; }
+    const prevCb = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof prevCb === "function") prevCb();
+      resolve(window.YT);
+    };
+    const tag = document.createElement("script");
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+  });
+  return ytReadyPromise;
+}
+
+// Accepts full YouTube/YouTube Music URLs or a raw playlist ID.
+function extractPlaylistId(input) {
+  if (!input) return null;
+  const t = String(input).trim();
+  if (!t) return null;
+  // Raw ID: YouTube playlist IDs are 13+ chars, alphanum/_/- only.
+  if (/^[A-Za-z0-9_-]{13,}$/.test(t) && !t.includes("/") && !t.includes("?")) return t;
+  try {
+    const u = new URL(t.startsWith("http") ? t : `https://${t}`);
+    const list = u.searchParams.get("list");
+    if (list) return list;
+  } catch {}
+  return null;
+}
+
+// ── MUSIC PANEL ────────────────────────────────────────────────────────────
+// Persistent 320px right column. Always mounted so playback survives screen
+// changes and hides-but-stays-mounted during active workouts. Also loads
+// Google Fonts for the whole app.
+function MusicPanel() {
+  const [url, setUrl] = useState("");
+  const [playlistId, setPlaylistId] = useState(null);
+  const [ready, setReady] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [title, setTitle] = useState("");
+  const playerRef = useRef(null);
+  const containerRef = useRef(null);
+
+  // Fonts + saved playlist URL on mount
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = FONT_LINK;
+    document.head.appendChild(link);
+
+    store.get("forge-playlist").then((saved) => {
+      if (saved?.url) {
+        setUrl(saved.url);
+        const id = extractPlaylistId(saved.url);
+        if (id) setPlaylistId(id);
+      }
+    });
+  }, []);
+
+  // Create the YT player exactly once. We attach a throwaway child div to our
+  // ref container and give that element to YT — YT replaces it with an iframe,
+  // which React never touches because it was never part of its virtual DOM.
+  useEffect(() => {
+    let cancelled = false;
+    if (!containerRef.current || playerRef.current) return;
+    const target = document.createElement("div");
+    containerRef.current.appendChild(target);
+    loadYT().then((YT) => {
+      if (cancelled || !YT || playerRef.current) return;
+      playerRef.current = new YT.Player(target, {
+        height: "162",
+        width: "288",
+        playerVars: { autoplay: 0, controls: 1, modestbranding: 1, rel: 0 },
+        events: {
+          onReady: () => setReady(true),
+          onStateChange: (e) => {
+            if (!window.YT) return;
+            setPlaying(e.data === window.YT.PlayerState.PLAYING);
+            try {
+              const d = e.target.getVideoData?.();
+              if (d?.title) setTitle(d.title);
+            } catch {}
+          },
+        },
+      });
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // When a saved playlist arrives (or the user loads a new one), cue it.
+  useEffect(() => {
+    if (!ready || !playerRef.current || !playlistId) return;
+    try {
+      playerRef.current.cuePlaylist({ list: playlistId, listType: "playlist" });
+    } catch {}
+  }, [ready, playlistId]);
+
+  const savePlaylist = async () => {
+    const id = extractPlaylistId(url);
+    if (!id) return;
+    setPlaylistId(id);
+    await store.set("forge-playlist", { url });
+  };
+
+  const togglePlay = () => {
+    const p = playerRef.current;
+    if (!p) return;
+    if (playing) p.pauseVideo?.(); else p.playVideo?.();
+  };
+  const nextTrack = () => playerRef.current?.nextVideo?.();
+  const prevTrack = () => playerRef.current?.previousVideo?.();
+
+  return (
+    <aside className="music-panel" style={{
+      background: "#0a0a0a",
+      borderLeft: `1px solid ${C.border}`,
+      padding: 16,
+      display: "flex",
+      flexDirection: "column",
+      gap: 14,
+      position: "sticky",
+      top: 0,
+      height: "100vh",
+      overflowY: "auto",
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+        <div style={{ fontFamily: "Orbitron, monospace", fontSize: 13, letterSpacing: 3, color: C.red, fontWeight: 700 }}>FORGE BEATS</div>
+        <div style={{ ...s.label, fontSize: 8 }}>{ready ? "READY" : "LOADING"}</div>
+      </div>
+
+      {/* YT player mount point. Must always exist in the DOM. */}
+      <div
+        id="forge-yt-player"
+        ref={containerRef}
+        style={{ background: "#000", borderRadius: 8, overflow: "hidden", width: 288, height: 162, alignSelf: "center" }}
+      />
+
+      <div style={{ minHeight: 34, fontSize: 12, color: C.muted, textAlign: "center", lineHeight: 1.3, padding: "0 4px" }}>
+        {title || (playlistId ? "Press play to start" : "No playlist loaded")}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+        <button onClick={prevTrack} style={{ ...s.adjBig, width: 46, height: 46, fontSize: 18 }}>⏮</button>
+        <button
+          onClick={togglePlay}
+          style={{
+            ...s.adjBig,
+            width: 58, height: 58, fontSize: 22,
+            background: C.red, borderColor: C.red, color: "#fff",
+            boxShadow: "0 0 20px rgba(204,17,17,0.4)",
+          }}
+        >{playing ? "⏸" : "▶"}</button>
+        <button onClick={nextTrack} style={{ ...s.adjBig, width: 46, height: 46, fontSize: 18 }}>⏭</button>
+      </div>
+
+      <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ ...s.label, fontSize: 9 }}>PLAYLIST URL</div>
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") savePlaylist(); }}
+          placeholder="youtube.com/playlist?list=..."
+          style={{
+            background: C.surf2, border: `1px solid ${C.border2}`, borderRadius: 6,
+            padding: "9px 12px", color: C.text, fontFamily: "Rajdhani, sans-serif", fontSize: 12, width: "100%",
+          }}
+        />
+        <button onClick={savePlaylist} style={{ ...s.adjSm, padding: "9px 0", letterSpacing: 2 }}>LOAD PLAYLIST</button>
+      </div>
+    </aside>
+  );
+}
+
 // ── MAIN APP ───────────────────────────────────────────────────────────────
 export default function ForgeGym() {
   const [screen, setScreen] = useState("home");
@@ -140,9 +319,7 @@ export default function ForgeGym() {
   const timerRef = useRef(null);
 
   useEffect(() => {
-    const link = document.createElement("link");
-    link.rel = "stylesheet"; link.href = FONT_LINK;
-    document.head.appendChild(link);
+    // Fonts are loaded from inside MusicPanel (it's always mounted).
     store.get("forge-history").then(h => h && setHistory(h));
   }, []);
 
@@ -256,11 +433,17 @@ targetReps should be a string like "8-10" or "12". Be direct, motivating, no flu
   const gCss = `
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
     :root{color-scheme:dark}
+    html,body{background:${C.bg};min-height:100vh}
     ::-webkit-scrollbar{width:3px}
     ::-webkit-scrollbar-track{background:${C.bg}}
     ::-webkit-scrollbar-thumb{background:${C.red};border-radius:2px}
     input,textarea,select{outline:none}
     button{display:flex;align-items:center;justify-content:center}
+    .forge-root{display:grid;grid-template-columns:1fr 320px;min-height:100vh;background:${C.bg};color:${C.text};font-family:Rajdhani,sans-serif}
+    .forge-main{display:flex;flex-direction:column;min-height:100vh;max-width:720px;width:100%;margin:0 auto;overflow:hidden}
+    .forge-root.active-mode{grid-template-columns:1fr}
+    .forge-root.active-mode .music-panel{display:none}
+    @media (max-width:900px){.forge-root{grid-template-columns:1fr}.music-panel{display:none}}
     @keyframes blink{0%,80%,100%{opacity:.15}40%{opacity:1}}
     @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
     @keyframes scanline{0%{top:-20%}100%{top:120%}}
@@ -270,9 +453,10 @@ targetReps should be a string like "8-10" or "12". Be direct, motivating, no flu
   const isSummary = screen === "summary";
 
   return (
-    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "Rajdhani, sans-serif", color: C.text, display: "flex", flexDirection: "column", maxWidth: 600, margin: "0 auto" }}>
+    <div className={`forge-root ${isActive ? "active-mode" : ""}`}>
       <style>{gCss}</style>
 
+      <div className="forge-main">
       {/* HEADER */}
       {!isActive && !isSummary && (
         <header style={{ background: "#0a0a0a", borderBottom: `1px solid ${C.border}`, padding: "13px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, position: "relative", overflow: "hidden" }}>
@@ -319,6 +503,9 @@ targetReps should be a string like "8-10" or "12". Be direct, motivating, no flu
           ))}
         </nav>
       )}
+      </div>
+
+      <MusicPanel />
     </div>
   );
 }
