@@ -1,121 +1,159 @@
-# FORGE GYM OS
+# Cyber Gym OS
 
-A personal home gym dashboard built around my Mikolo Smith Machine Multi-Function Power Cage. Runs on my home server and is accessed from a smart TV browser in the gym, a Pi touchscreen on the rack, or whatever phone is closest. Single user, LAN-only, no auth — physical access to the network is the access control.
+A local-network home gym dashboard with AI coaching, workout tracking, strength levels, form videos, and plate calculator. Runs on your home server or PC — no internet required during workouts (except the AI coach).
 
-## Why local
+![Cyber Gym OS](public/CyberGym-logo.png)
 
-- Workout logs never leave the house
-- The Anthropic API key lives in an env file on the server, never in the browser
-- Works even when the internet is down (everything except the AI Coach)
-- Same URL from every device — history is shared between the TV, the touchscreen, and my phone
+---
 
-## Features
-
-- **Home** — today's date, total sessions, last workout recap, quick launch
-- **Exercise Library** — 40+ exercises organized by muscle group (Chest, Back, Legs, Shoulders, Arms, Core), all mapped to what the Mikolo cage can actually do
-- **Workout Builder** — pick exercises, configure sets / reps / rest per-exercise, then launch
-- **Active Workout** — one-screen-at-a-time flow with big touch targets: weight and rep steppers, previous-set reference, a circular rest timer with skip, per-exercise progress bar
-- **AI Coach (FORGE)** — Claude-powered coach that knows the Mikolo cage's capabilities and returns fully-configured workouts as structured JSON you can start with one tap
-- **History** — every session stored with full set-by-set detail, expandable cards, total volume
-- **Summary** — post-workout stats: duration, total sets, total volume, exercise breakdown
-
-## Equipment the AI Coach knows about
-
-The AI Coach is primed with the specific capabilities of my rig so it can only suggest things I can actually do:
-
-- Mikolo Smith Machine Multi-Function Power Cage
-- Dual cable system (with rope, lat bar, v-bar, ankle strap, handles)
-- Vertical leg press
-- Pull-up bar
-- Dip handles
-
-## Stack
-
-- **Frontend:** React + Vite — single-page app, dark tactical UI, all inline styles (no CSS framework)
-- **Backend:** Node + Express — serves the built frontend, proxies the Anthropic API so the key stays server-side, and persists workout history as atomic JSON file writes
-- **AI:** Claude (Anthropic Messages API) via server-side proxy
-- **Storage:** Flat JSON file on disk. Single user, append-only, no database needed
-
-## First-time setup
-
-Requires Node.js 20 or newer.
+## Quick Install (Linux)
 
 ```bash
-npm install
-cp .env.example .env
-# edit .env and paste your ANTHROPIC_API_KEY
+chmod +x install.sh
+./install.sh
 ```
 
-## Develop (Windows or Linux)
+That's it. The installer will:
+- Check / install Node.js 18+ if needed
+- Prompt for your Anthropic API key (for the AI coach)
+- Build the app
+- Create a desktop icon and Applications menu entry
+- Optionally start Cyber Gym automatically at login
+
+**After installing**, double-click the desktop icon or open a browser to `http://localhost:3000`.
+
+---
+
+## Getting an Anthropic API Key
+
+The AI coach is powered by Claude. API keys are free to get:
+
+1. Go to [console.anthropic.com](https://console.anthropic.com)
+2. Sign up / log in
+3. Click **API Keys** → **Create Key**
+4. Paste the key (`sk-ant-...`) when the installer asks
+
+If you skipped the key during install, add it later by editing:
+```
+~/.local/share/cyber-gym/.env
+```
+
+---
+
+## Sharing with a Friend
+
+1. Send them the zip file of this project
+2. They unzip it and run `./install.sh`
+3. They enter their own Anthropic API key when prompted
+4. Done — each person has their own independent install with their own workout data
+
+---
+
+## Manual Launch (without the icon)
+
+```bash
+~/.local/share/cyber-gym/forge.sh
+```
+
+Or if you're running from the project folder directly:
+```bash
+./forge.sh
+```
+
+---
+
+## Auto-start at Login
+
+The installer asks if you want this. To change it later:
+
+```bash
+# Enable auto-start
+systemctl --user enable cyber-gym
+systemctl --user start  cyber-gym
+
+# Disable auto-start
+systemctl --user disable cyber-gym
+systemctl --user stop    cyber-gym
+
+# Check status / view logs
+systemctl --user status cyber-gym
+journalctl --user -u cyber-gym -f
+```
+
+---
+
+## Accessing from Other Devices on Your Network
+
+Once running, open a browser on any device on your home network and go to:
+```
+http://[your-pc-ip]:3000
+```
+
+Find your IP with `hostname -I`. Works great on a phone or tablet as a mobile workout companion.
+
+---
+
+## Uninstall
+
+```bash
+./uninstall.sh
+```
+
+Or from any location:
+```bash
+~/.local/share/cyber-gym/uninstall.sh
+```
+
+---
+
+## Windows
+
+Double-click `FORGE.bat`. Requires [Node.js](https://nodejs.org) installed first. Add your API key to `.env` in the project folder.
+
+---
+
+## Dev Mode
 
 ```bash
 npm run dev
 ```
 
-- Frontend: http://localhost:5173
-- Backend:  http://localhost:3000
-- Vite proxies `/api/*` to the backend automatically, so the browser only ever talks to one origin.
+Starts the backend on `:3000` and Vite dev server on `:5173` with hot reload.
 
-## Run on the home server
+---
 
-```bash
-npm run build    # bundles the frontend into dist/
-npm start        # Express serves dist/ + /api on :3000, bound to 0.0.0.0
-```
+## What's Inside
 
-From any device on the LAN, open `http://<server-hostname-or-ip>:3000`.
+| Feature | Details |
+|---|---|
+| **Workout builder** | Pick exercises from 42-exercise library, configure sets/reps/rest |
+| **AI Coach** | Claude-powered routine generator, weekly recap, rest day intelligence |
+| **Form videos** | Side-view MP4s for every exercise (populated by `scrape_musclewiki.py`) |
+| **Muscle diagrams** | Primary/secondary muscle highlights per exercise |
+| **Plate calculator** | Live breakdown of plates to load on the Smith bar |
+| **Strength levels** | Beginner → Elite scale per exercise based on your PR history |
+| **Progressive overload** | Suggests weight increases when you've hit all reps |
+| **PR tracking** | Epley 1RM estimation, PR flash on summary screen |
+| **Workout templates** | Save and relaunch named workouts in one tap |
+| **History** | Full set-by-set log with repeat functionality |
+| **Bodyweight log** | Chart your weight over time, feeds into AI context |
+| **Streak tracker** | Consecutive training day counter |
+| **Kiosk mode** | Fullscreen button for touchscreen display |
+| **LAN access** | Works from any device on your home network |
 
-## Data
+---
 
-Workout history is saved to `data/forge-history.json` on the server. The whole `data/` directory is gitignored — back it up yourself if you want to keep your logs long-term. Writes are atomic (tmp + rename) so a crash mid-write won't corrupt history.
+## Adding Form Videos
 
-## Environment variables
-
-See `.env.example`:
-
-- `ANTHROPIC_API_KEY` — required for the AI Coach screen. The rest of the app (library, builder, active workout, history) works fine without it.
-- `PORT` — default `3000`
-- `HOST` — default `0.0.0.0` (bind all interfaces so LAN devices can reach it)
-
-## Auto-start on boot (Linux + systemd)
-
-Create `/etc/systemd/system/forge.service`:
-
-```ini
-[Unit]
-Description=FORGE Gym OS
-After=network-online.target
-
-[Service]
-Type=simple
-User=YOUR_USER
-WorkingDirectory=/path/to/HomeGymDashboard
-EnvironmentFile=/path/to/HomeGymDashboard/.env
-ExecStart=/usr/bin/node server/index.js
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then:
+Run the scraper to download side-view form videos from MuscleWiki:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now forge
-sudo systemctl status forge
+python3 scrape_musclewiki.py ~/.local/share/cyber-gym
 ```
 
-## Roadmap / ideas
+Or from the project folder:
+```bash
+python3 scrape_musclewiki.py .
+```
 
-Things I'd like to add when I get around to them:
-
-- **Local Ollama mode** — route the AI Coach to a local Ollama model instead of the Anthropic API for fully-offline operation (the home server already runs Ollama)
-- **PR tracking** — auto-detect 1RM / volume PRs per exercise and surface them on the home screen
-- **Plate calculator** — given a target weight, show the plate loadout per side (useful for the Smith bar's specific counterweight)
-- **Progression suggestions** — "last time you did 185×8, try 190×8 today"
-- **Rest-day / split planning** — weekly calendar view
-- **Body metrics** — bodyweight log, simple charts
-- **Voice control** — "FORGE, log set" when my hands are chalky
-- **Touchscreen kiosk mode** — Pi boots straight into the browser fullscreen on the gym touchscreen, no Linux desktop visible
-- **Multi-user** — if anyone else ever uses the gym, per-user history (would mean moving from JSON file to SQLite)
+Videos download to `public/exercises/` — the app picks them up automatically. Takes about 60 seconds for all 42 exercises.
